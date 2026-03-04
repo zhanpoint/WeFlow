@@ -6475,6 +6475,66 @@ class ChatService {
     }
   }
 
+  async getMessageDateCounts(sessionId: string): Promise<{ success: boolean; counts?: Record<string, number>; error?: string }> {
+    try {
+      const connectResult = await this.ensureConnected()
+      if (!connectResult.success) {
+        return { success: false, error: connectResult.error || '数据库未连接' }
+      }
+
+      let tables = this.sessionTablesCache.get(sessionId)
+      if (!tables) {
+        const tableStats = await wcdbService.getMessageTableStats(sessionId)
+        if (!tableStats.success || !tableStats.tables || tableStats.tables.length === 0) {
+          return { success: false, error: '未找到会话消息表' }
+        }
+        tables = tableStats.tables
+          .map(t => ({ tableName: t.table_name || t.name, dbPath: t.db_path }))
+          .filter(t => t.tableName && t.dbPath) as Array<{ tableName: string; dbPath: string }>
+        if (tables.length > 0) {
+          this.sessionTablesCache.set(sessionId, tables)
+          setTimeout(() => {
+            this.sessionTablesCache.delete(sessionId)
+          }, this.sessionTablesCacheTtl)
+        }
+      }
+
+      const counts: Record<string, number> = {}
+      let hasAnySuccess = false
+
+      for (const { tableName, dbPath } of tables) {
+        try {
+          const escapedTableName = String(tableName).replace(/"/g, '""')
+          const sql = `SELECT strftime('%Y-%m-%d', CASE WHEN create_time > 10000000000 THEN create_time / 1000 ELSE create_time END, 'unixepoch', 'localtime') AS date_key, COUNT(*) AS message_count FROM "${escapedTableName}" WHERE create_time IS NOT NULL GROUP BY date_key`
+          const result = await wcdbService.execQuery('message', dbPath, sql)
+          if (!result.success || !Array.isArray(result.rows)) {
+            console.warn(`[ChatService] 查询每日消息数失败 (${dbPath}):`, result.error)
+            continue
+          }
+          hasAnySuccess = true
+          result.rows.forEach((row: Record<string, unknown>) => {
+            const date = String(row.date_key || '').trim()
+            const count = Number(row.message_count || 0)
+            if (!date || !Number.isFinite(count) || count <= 0) return
+            counts[date] = (counts[date] || 0) + count
+          })
+        } catch (error) {
+          console.warn(`[ChatService] 聚合每日消息数失败 (${dbPath}):`, error)
+        }
+      }
+
+      if (!hasAnySuccess) {
+        return { success: false, error: '查询每日消息数失败' }
+      }
+
+      console.log(`[ChatService] 会话 ${sessionId} 获取到 ${Object.keys(counts).length} 个日期的消息计数`)
+      return { success: true, counts }
+    } catch (error) {
+      console.error('[ChatService] 获取每日消息数失败:', error)
+      return { success: false, error: String(error) }
+    }
+  }
+
   async getMessageById(sessionId: string, localId: number): Promise<{ success: boolean; message?: Message; error?: string }> {
     try {
       // 1. 尝试从缓存获取会话表信息

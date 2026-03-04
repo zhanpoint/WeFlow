@@ -1231,6 +1231,9 @@ function registerIpcHandlers() {
   ipcMain.handle('chat:getMessageDates', async (_, sessionId: string) => {
     return chatService.getMessageDates(sessionId)
   })
+  ipcMain.handle('chat:getMessageDateCounts', async (_, sessionId: string) => {
+    return chatService.getMessageDateCounts(sessionId)
+  })
   ipcMain.handle('chat:resolveVoiceCache', async (_, sessionId: string, msgId: string) => {
     return chatService.resolveVoiceCache(sessionId, msgId)
   })

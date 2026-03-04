@@ -490,6 +490,12 @@
           gap: 8px;
           -webkit-app-region: no-drag;
 
+          .jump-calendar-anchor {
+            position: relative;
+            display: flex;
+            align-items: center;
+          }
+
           .icon-btn {
             width: 34px;
             height: 34px;
@@ -1626,6 +1632,12 @@
     display: flex;
     align-items: center;
     gap: 8px;
+
+    .jump-calendar-anchor {
+      position: relative;
+      display: flex;
+      align-items: center;
+    }
   }
 
   .icon-btn {

@@ -288,6 +288,8 @@ export interface ElectronAPI {
       images?: { imageMd5?: string; imageDatName?: string; createTime?: number }[]
       error?: string
     }>
+    getMessageDates: (sessionId: string) => Promise<{ success: boolean; dates?: string[]; error?: string }>
+    getMessageDateCounts: (sessionId: string) => Promise<{ success: boolean; counts?: Record<string, number>; error?: string }>
     resolveVoiceCache: (sessionId: string, msgId: string) => Promise<{ success: boolean; hasCache: boolean; data?: string }>
     getVoiceTranscript: (sessionId: string, msgId: string, createTime?: number) => Promise<{ success: boolean; transcript?: string; error?: string }>
     onVoiceTranscriptPartial: (callback: (payload: { msgId: string; text: string }) => void) => () => void

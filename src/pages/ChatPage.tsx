@@ -10,7 +10,7 @@ import { getEmojiPath } from 'wechat-emojis'
 import { VoiceTranscribeDialog } from '../components/VoiceTranscribeDialog'
 import { LivePhotoIcon } from '../components/LivePhotoIcon'
 import { AnimatedStreamingText } from '../components/AnimatedStreamingText'
-import JumpToDateDialog from '../components/JumpToDateDialog'
+import JumpToDatePopover from '../components/JumpToDatePopover'
 import * as configService from '../services/config'
 import {
   emitOpenSingleExport,
@@ -452,14 +452,20 @@ function ChatPage(props: ChatPageProps) {
   }, [])
   const initialRevealTimerRef = useRef<number | null>(null)
   const sessionListRef = useRef<HTMLDivElement>(null)
+  const jumpCalendarWrapRef = useRef<HTMLDivElement>(null)
   const [currentOffset, setCurrentOffset] = useState(0)
   const [jumpStartTime, setJumpStartTime] = useState(0)
   const [jumpEndTime, setJumpEndTime] = useState(0)
-  const [showJumpDialog, setShowJumpDialog] = useState(false)
+  const [showJumpPopover, setShowJumpPopover] = useState(false)
+  const [jumpPopoverDate, setJumpPopoverDate] = useState<Date>(new Date())
   const isDateJumpRef = useRef(false)
   const [messageDates, setMessageDates] = useState<Set<string>>(new Set())
+  const [hasLoadedMessageDates, setHasLoadedMessageDates] = useState(false)
   const [loadingDates, setLoadingDates] = useState(false)
   const messageDatesCache = useRef<Map<string, Set<string>>>(new Map())
+  const [messageDateCounts, setMessageDateCounts] = useState<Record<string, number>>({})
+  const [loadingDateCounts, setLoadingDateCounts] = useState(false)
+  const messageDateCountsCache = useRef<Map<string, Record<string, number>>>(new Map())
   const [myAvatarUrl, setMyAvatarUrl] = useState<string | undefined>(undefined)
   const [myWxid, setMyWxid] = useState<string | undefined>(undefined)
   const [showScrollToBottom, setShowScrollToBottom] = useState(false)
@@ -568,6 +574,8 @@ function ChatPage(props: ChatPageProps) {
   const sessionListPersistTimerRef = useRef<number | null>(null)
   const pendingExportRequestIdRef = useRef<string | null>(null)
   const exportPrepareLongWaitTimerRef = useRef<number | null>(null)
+  const jumpDatesRequestSeqRef = useRef(0)
+  const jumpDateCountsRequestSeqRef = useRef(0)
 
   const isGroupChatSession = useCallback((username: string) => {
     return username.includes('@chatroom')
@@ -582,6 +590,95 @@ function ChatPage(props: ChatPageProps) {
       exportPrepareLongWaitTimerRef.current = null
     }
   }, [])
+
+  const resolveCurrentViewDate = useCallback(() => {
+    if (jumpStartTime > 0) {
+      return new Date(jumpStartTime * 1000)
+    }
+    const fallbackMessage = messages[messages.length - 1] || messages[0]
+    const rawTimestamp = Number(fallbackMessage?.createTime || 0)
+    if (Number.isFinite(rawTimestamp) && rawTimestamp > 0) {
+      return new Date(rawTimestamp > 10000000000 ? rawTimestamp : rawTimestamp * 1000)
+    }
+    return new Date()
+  }, [jumpStartTime, messages])
+
+  const loadJumpCalendarData = useCallback(async (sessionId: string) => {
+    const normalizedSessionId = String(sessionId || '').trim()
+    if (!normalizedSessionId) return
+
+    const cachedDates = messageDatesCache.current.get(normalizedSessionId)
+    if (cachedDates) {
+      setMessageDates(new Set(cachedDates))
+      setHasLoadedMessageDates(true)
+      setLoadingDates(false)
+    } else {
+      setLoadingDates(true)
+      setHasLoadedMessageDates(false)
+      setMessageDates(new Set())
+      const requestSeq = jumpDatesRequestSeqRef.current + 1
+      jumpDatesRequestSeqRef.current = requestSeq
+      try {
+        const result = await window.electronAPI.chat.getMessageDates(normalizedSessionId)
+        if (requestSeq !== jumpDatesRequestSeqRef.current || currentSessionRef.current !== normalizedSessionId) return
+        if (result?.success && Array.isArray(result.dates)) {
+          const dateSet = new Set<string>(result.dates)
+          messageDatesCache.current.set(normalizedSessionId, dateSet)
+          setMessageDates(new Set(dateSet))
+          setHasLoadedMessageDates(true)
+        }
+      } catch (error) {
+        console.error('获取消息日期失败:', error)
+      } finally {
+        if (requestSeq === jumpDatesRequestSeqRef.current && currentSessionRef.current === normalizedSessionId) {
+          setLoadingDates(false)
+        }
+      }
+    }
+
+    const cachedCounts = messageDateCountsCache.current.get(normalizedSessionId)
+    if (cachedCounts) {
+      setMessageDateCounts({ ...cachedCounts })
+      setLoadingDateCounts(false)
+      return
+    }
+
+    setLoadingDateCounts(true)
+    setMessageDateCounts({})
+    const requestSeq = jumpDateCountsRequestSeqRef.current + 1
+    jumpDateCountsRequestSeqRef.current = requestSeq
+    try {
+      const result = await window.electronAPI.chat.getMessageDateCounts(normalizedSessionId)
+      if (requestSeq !== jumpDateCountsRequestSeqRef.current || currentSessionRef.current !== normalizedSessionId) return
+      if (result?.success && result.counts) {
+        const normalizedCounts: Record<string, number> = {}
+        Object.entries(result.counts).forEach(([date, value]) => {
+          const count = Number(value)
+          if (!date || !Number.isFinite(count) || count <= 0) return
+          normalizedCounts[date] = count
+        })
+        messageDateCountsCache.current.set(normalizedSessionId, normalizedCounts)
+        setMessageDateCounts(normalizedCounts)
+      }
+    } catch (error) {
+      console.error('获取每日消息数失败:', error)
+    } finally {
+      if (requestSeq === jumpDateCountsRequestSeqRef.current && currentSessionRef.current === normalizedSessionId) {
+        setLoadingDateCounts(false)
+      }
+    }
+  }, [])
+
+  const handleToggleJumpPopover = useCallback(() => {
+    if (!currentSessionId) return
+    if (showJumpPopover) {
+      setShowJumpPopover(false)
+      return
+    }
+    setJumpPopoverDate(resolveCurrentViewDate())
+    setShowJumpPopover(true)
+    void loadJumpCalendarData(currentSessionId)
+  }, [currentSessionId, loadJumpCalendarData, resolveCurrentViewDate, showJumpPopover])
 
   useEffect(() => {
     const unsubscribe = onExportSessionStatus((payload) => {
@@ -2209,6 +2306,19 @@ function ChatPage(props: ChatPageProps) {
     }
   }
 
+  const handleJumpDateSelect = useCallback((date: Date) => {
+    if (!currentSessionId) return
+    const targetDate = new Date(date)
+    const start = Math.floor(targetDate.setHours(0, 0, 0, 0) / 1000)
+    const end = Math.floor(targetDate.setHours(23, 59, 59, 999) / 1000)
+    isDateJumpRef.current = true
+    setCurrentOffset(0)
+    setJumpStartTime(start)
+    setJumpEndTime(end)
+    setShowJumpPopover(false)
+    void loadMessages(currentSessionId, 0, start, end, true)
+  }, [currentSessionId, loadMessages])
+
   // 加载更晚的消息
   const loadLaterMessages = useCallback(async () => {
     if (!currentSessionId || isLoadingMore || isLoadingMessages || messages.length === 0) return
@@ -2300,6 +2410,7 @@ function ChatPage(props: ChatPageProps) {
       })
     }
     // 切换会话后回到正常聊天窗口：收起详情侧栏，详情需手动再次展开
+    setShowJumpPopover(false)
     setShowDetailPanel(false)
     setShowGroupMembersPanel(false)
     setGroupMemberSearchKeyword('')
@@ -2623,6 +2734,29 @@ function ChatPage(props: ChatPageProps) {
   useEffect(() => {
     searchKeywordRef.current = searchKeyword
   }, [searchKeyword])
+
+  useEffect(() => {
+    if (!showJumpPopover) return
+    const handleGlobalPointerDown = (event: MouseEvent) => {
+      const target = event.target as Node | null
+      if (!target) return
+      if (jumpCalendarWrapRef.current?.contains(target)) return
+      setShowJumpPopover(false)
+    }
+    document.addEventListener('mousedown', handleGlobalPointerDown)
+    return () => {
+      document.removeEventListener('mousedown', handleGlobalPointerDown)
+    }
+  }, [showJumpPopover])
+
+  useEffect(() => {
+    setShowJumpPopover(false)
+    setLoadingDates(false)
+    setLoadingDateCounts(false)
+    setHasLoadedMessageDates(false)
+    setMessageDates(new Set())
+    setMessageDateCounts({})
+  }, [currentSessionId])
 
   useEffect(() => {
     if (!currentSessionId || !Array.isArray(messages) || messages.length === 0) return
@@ -3636,53 +3770,26 @@ function ChatPage(props: ChatPageProps) {
                     <ImageIcon size={18} />
                   )}
                 </button>
-                <button
-                  className="icon-btn jump-to-time-btn"
-                  onClick={async () => {
-                    setShowJumpDialog(true)
-                    if (!currentSessionId) return
-                    // 检查缓存
-                    const cached = messageDatesCache.current.get(currentSessionId)
-                    if (cached) {
-                      setMessageDates(cached)
-                      return
-                    }
-                    // 获取消息日期
-                    setMessageDates(new Set()) // 清除旧数据
-                    setLoadingDates(true)
-                    try {
-                      const result = await (window as any).electronAPI.chat.getMessageDates(currentSessionId)
-                      if (result?.success && result.dates) {
-                        const dateSet = new Set<string>(result.dates)
-                        setMessageDates(dateSet)
-                        messageDatesCache.current.set(currentSessionId, dateSet)
-                      }
-                    } catch (e) {
-                      console.error('获取消息日期失败:', e)
-                    } finally {
-                      setLoadingDates(false)
-                    }
-                  }}
-                  title="跳转到指定时间"
-                >
-                  <Calendar size={18} />
-                </button>
-                <JumpToDateDialog
-                  isOpen={showJumpDialog}
-                  onClose={() => setShowJumpDialog(false)}
-                  onSelect={(date) => {
-                    if (!currentSessionId) return
-                    const start = Math.floor(date.setHours(0, 0, 0, 0) / 1000)
-                    const end = Math.floor(date.setHours(23, 59, 59, 999) / 1000)
-                    isDateJumpRef.current = true
-                    setCurrentOffset(0)
-                    setJumpStartTime(start)
-                    setJumpEndTime(end)
-                    loadMessages(currentSessionId, 0, start, end, true)
-                  }}
-                  messageDates={messageDates}
-                  loadingDates={loadingDates}
-                />
+                <div className="jump-calendar-anchor" ref={jumpCalendarWrapRef}>
+                  <button
+                    className={`icon-btn jump-to-time-btn ${showJumpPopover ? 'active' : ''}`}
+                    onClick={handleToggleJumpPopover}
+                    title="跳转到指定时间"
+                  >
+                    <Calendar size={18} />
+                  </button>
+                  <JumpToDatePopover
+                    isOpen={showJumpPopover}
+                    currentDate={jumpPopoverDate}
+                    onClose={() => setShowJumpPopover(false)}
+                    onSelect={handleJumpDateSelect}
+                    messageDates={messageDates}
+                    hasLoadedMessageDates={hasLoadedMessageDates}
+                    messageDateCounts={messageDateCounts}
+                    loadingDates={loadingDates}
+                    loadingDateCounts={loadingDateCounts}
+                  />
+                </div>
                 <button
                   className="icon-btn refresh-messages-btn"
                   onClick={handleRefreshMessages}

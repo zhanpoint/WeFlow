@@ -182,6 +182,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     getAllVoiceMessages: (sessionId: string) => ipcRenderer.invoke('chat:getAllVoiceMessages', sessionId),
     getAllImageMessages: (sessionId: string) => ipcRenderer.invoke('chat:getAllImageMessages', sessionId),
     getMessageDates: (sessionId: string) => ipcRenderer.invoke('chat:getMessageDates', sessionId),
+    getMessageDateCounts: (sessionId: string) => ipcRenderer.invoke('chat:getMessageDateCounts', sessionId),
     resolveVoiceCache: (sessionId: string, msgId: string) => ipcRenderer.invoke('chat:resolveVoiceCache', sessionId, msgId),
     getVoiceTranscript: (sessionId: string, msgId: string, createTime?: number) => ipcRenderer.invoke('chat:getVoiceTranscript', sessionId, msgId, createTime),
     onVoiceTranscriptPartial: (callback: (payload: { msgId: string; text: string }) => void) => {
