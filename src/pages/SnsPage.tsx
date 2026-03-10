@@ -407,6 +407,15 @@ export default function SnsPage() {
         return `${names.slice(0, 2).join('、')} 等 ${names.length} 人`
     }, [contacts, selectedContactUsernames])
 
+    const selectedContactUsernameSet = useMemo(() => (
+        new Set(selectedContactUsernames.map((username) => normalizeAccountId(username)))
+    ), [selectedContactUsernames])
+
+    const visiblePosts = useMemo(() => {
+        if (selectedContactUsernameSet.size === 0) return posts
+        return posts.filter((post) => selectedContactUsernameSet.has(normalizeAccountId(post.username)))
+    }, [posts, selectedContactUsernameSet])
+
     const myTimelineCount = useMemo(() => {
         if (resolvedCurrentUserContact?.postCountStatus === 'ready' && typeof resolvedCurrentUserContact.postCount === 'number') {
             return normalizePostCount(resolvedCurrentUserContact.postCount)
@@ -624,14 +633,19 @@ export default function SnsPage() {
 
         try {
             const limit = 20
-            const selectedUsernames = selectedContactUsernames.length > 0 ? selectedContactUsernames : undefined
+            const currentSearchKeyword = searchKeywordRef.current
+            const currentJumpTargetDate = jumpTargetDateRef.current
+            const currentSelectedContactUsernames = selectedContactUsernamesRef.current
+            const selectedUsernames = currentSelectedContactUsernames.length > 0
+                ? [...currentSelectedContactUsernames]
+                : undefined
             let startTs: number | undefined = undefined
             let endTs: number | undefined = undefined
 
             if (reset) {
                 // If jumping to date, set endTs to end of that day
-                if (jumpTargetDate) {
-                    endTs = Math.floor(jumpTargetDate.getTime() / 1000) + 86399
+                if (currentJumpTargetDate) {
+                    endTs = Math.floor(currentJumpTargetDate.getTime() / 1000) + 86399
                 }
             } else if (direction === 'newer') {
                 const currentPosts = postsRef.current
@@ -642,7 +656,7 @@ export default function SnsPage() {
                         limit,
                         0,
                         selectedUsernames,
-                        searchKeyword,
+                        currentSearchKeyword,
                         topTs + 1,
                         undefined
                     );
@@ -683,7 +697,7 @@ export default function SnsPage() {
                 limit,
                 0,
                 selectedUsernames,
-                searchKeyword,
+                currentSearchKeyword,
                 startTs, // default undefined
                 endTs
             )
@@ -697,7 +711,7 @@ export default function SnsPage() {
                     // Check for newer items above topTs
                     const topTs = result.timeline[0]?.createTime || 0;
                     if (topTs > 0) {
-                        const checkResult = await window.electronAPI.sns.getTimeline(1, 0, selectedUsernames, searchKeyword, topTs + 1, undefined);
+                        const checkResult = await window.electronAPI.sns.getTimeline(1, 0, selectedUsernames, currentSearchKeyword, topTs + 1, undefined);
                         setHasNewer(!!(checkResult.success && checkResult.timeline && checkResult.timeline.length > 0));
                     } else {
                         setHasNewer(false);
@@ -728,7 +742,7 @@ export default function SnsPage() {
                 void loadPosts({ reset: true })
             }
         }
-    }, [jumpTargetDate, persistSnsPageCache, searchKeyword, selectedContactUsernames])
+    }, [persistSnsPageCache])
 
     const stopContactsCountHydration = useCallback((resetProgress = false) => {
         contactsCountHydrationTokenRef.current += 1
@@ -1406,7 +1420,7 @@ export default function SnsPage() {
                         )}
 
                         <div className="posts-list">
-                            {posts.map(post => (
+                            {visiblePosts.map(post => (
                                 <SnsPostItem
                                     key={post.id}
                                     post={{ ...post, isProtected: triggerInstalled === true }}
@@ -1424,7 +1438,7 @@ export default function SnsPage() {
                             ))}
                         </div>
 
-                        {loading && posts.length === 0 && (
+                        {loading && visiblePosts.length === 0 && (
                             <div className="initial-loading">
                                 <div className="loading-pulse">
                                     <div className="pulse-circle"></div>
@@ -1433,18 +1447,18 @@ export default function SnsPage() {
                             </div>
                         )}
 
-                        {loading && posts.length > 0 && (
+                        {loading && visiblePosts.length > 0 && (
                             <div className="status-indicator loading-more">
                                 <RefreshCw size={16} className="spinning" />
                                 <span>正在加载更多...</span>
                             </div>
                         )}
 
-                        {!hasMore && posts.length > 0 && (
+                        {!hasMore && visiblePosts.length > 0 && (
                             <div className="status-indicator no-more">或许过往已无可溯洄，但好在还有可以与你相遇的明天</div>
                         )}
 
-                        {!loading && posts.length === 0 && (
+                        {!loading && visiblePosts.length === 0 && (
                             <div className="no-results">
                                 <div className="no-results-icon"><Search size={48} /></div>
                                 <p>未找到相关动态</p>
